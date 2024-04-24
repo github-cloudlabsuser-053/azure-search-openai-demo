@@ -90,7 +90,26 @@ class ThoughtStep:
     props: Optional[dict[str, Any]] = None
 
 
+from typing import Optional, List, Callable, Awaitable, Any, Union
+from abc import ABC
+from azure.search.documents import SearchClient, Document
+from azure.core.async_paging import AsyncItemPaged
+from openai import AsyncOpenAI
+from authentication_helper import AuthenticationHelper
+from query_caption_result import QueryCaptionResult
+from vector_query import VectorQuery
+from vectorized_query import VectorizedQuery
+import os
+import aiohttp
+from urllib.parse import urljoin
+from typing_extensions import TypedDict
+
+
 class Approach(ABC):
+    """
+    Base class for different approaches used in the application.
+    """
+
     def __init__(
         self,
         search_client: SearchClient,
@@ -105,6 +124,22 @@ class Approach(ABC):
         vision_endpoint: str,
         vision_token_provider: Callable[[], Awaitable[str]],
     ):
+        """
+        Initialize the Approach class.
+
+        Args:
+            search_client (SearchClient): The Azure Cognitive Search client.
+            openai_client (AsyncOpenAI): The OpenAI client.
+            auth_helper (AuthenticationHelper): The authentication helper.
+            query_language (Optional[str]): The query language.
+            query_speller (Optional[str]): The query speller.
+            embedding_deployment (Optional[str]): The embedding deployment.
+            embedding_model (str): The embedding model.
+            embedding_dimensions (int): The embedding dimensions.
+            openai_host (str): The OpenAI host.
+            vision_endpoint (str): The vision endpoint.
+            vision_token_provider (Callable[[], Awaitable[str]]): The vision token provider.
+        """
         self.search_client = search_client
         self.openai_client = openai_client
         self.auth_helper = auth_helper
@@ -118,6 +153,16 @@ class Approach(ABC):
         self.vision_token_provider = vision_token_provider
 
     def build_filter(self, overrides: dict[str, Any], auth_claims: dict[str, Any]) -> Optional[str]:
+        """
+        Build the filter based on the overrides and authentication claims.
+
+        Args:
+            overrides (dict[str, Any]): The overrides.
+            auth_claims (dict[str, Any]): The authentication claims.
+
+        Returns:
+            Optional[str]: The built filter.
+        """
         exclude_category = overrides.get("exclude_category")
         security_filter = self.auth_helper.build_security_filters(overrides, auth_claims)
         filters = []
@@ -138,6 +183,22 @@ class Approach(ABC):
         minimum_search_score: Optional[float],
         minimum_reranker_score: Optional[float],
     ) -> List[Document]:
+        """
+        Perform a search operation.
+
+        Args:
+            top (int): The number of documents to retrieve.
+            query_text (Optional[str]): The query text.
+            filter (Optional[str]): The filter.
+            vectors (List[VectorQuery]): The vector queries.
+            use_semantic_ranker (bool): Whether to use the semantic ranker.
+            use_semantic_captions (bool): Whether to use semantic captions.
+            minimum_search_score (Optional[float]): The minimum search score.
+            minimum_reranker_score (Optional[float]): The minimum reranker score.
+
+        Returns:
+            List[Document]: The list of documents.
+        """
         # Use semantic ranker if requested and if retrieval mode is text or hybrid (vectors + text)
         if use_semantic_ranker and query_text:
             results = await self.search_client.search(
@@ -190,6 +251,17 @@ class Approach(ABC):
     def get_sources_content(
         self, results: List[Document], use_semantic_captions: bool, use_image_citation: bool
     ) -> list[str]:
+        """
+        Get the content of the sources.
+
+        Args:
+            results (List[Document]): The list of documents.
+            use_semantic_captions (bool): Whether to use semantic captions.
+            use_image_citation (bool): Whether to use image citation.
+
+        Returns:
+            list[str]: The list of source contents.
+        """
         if use_semantic_captions:
             return [
                 (self.get_citation((doc.sourcepage or ""), use_image_citation))
@@ -204,6 +276,16 @@ class Approach(ABC):
             ]
 
     def get_citation(self, sourcepage: str, use_image_citation: bool) -> str:
+        """
+        Get the citation for a source.
+
+        Args:
+            sourcepage (str): The source page.
+            use_image_citation (bool): Whether to use image citation.
+
+        Returns:
+            str: The citation.
+        """
         if use_image_citation:
             return sourcepage
         else:
@@ -216,6 +298,15 @@ class Approach(ABC):
             return sourcepage
 
     async def compute_text_embedding(self, q: str):
+        """
+        Compute the text embedding.
+
+        Args:
+            q (str): The input text.
+
+        Returns:
+            VectorizedQuery: The vectorized query.
+        """
         SUPPORTED_DIMENSIONS_MODEL = {
             "text-embedding-ada-002": False,
             "text-embedding-3-small": True,
@@ -238,6 +329,15 @@ class Approach(ABC):
         return VectorizedQuery(vector=query_vector, k_nearest_neighbors=50, fields="embedding")
 
     async def compute_image_embedding(self, q: str):
+        """
+        Compute the image embedding.
+
+        Args:
+            q (str): The input text.
+
+        Returns:
+            VectorizedQuery: The vectorized query.
+        """
         endpoint = urljoin(self.vision_endpoint, "computervision/retrieval:vectorizeText")
         headers = {"Content-Type": "application/json"}
         params = {"api-version": "2023-02-01-preview", "modelVersion": "latest"}
@@ -256,4 +356,19 @@ class Approach(ABC):
     async def run(
         self, messages: list[dict], stream: bool = False, session_state: Any = None, context: dict[str, Any] = {}
     ) -> Union[dict[str, Any], AsyncGenerator[dict[str, Any], None]]:
+        """
+        Run the approach.
+
+        Args:
+            messages (list[dict]): The list of messages.
+            stream (bool, optional): Whether to stream the results. Defaults to False.
+            session_state (Any, optional): The session state. Defaults to None.
+            context (dict[str, Any], optional): The context. Defaults to {}.
+
+        Raises:
+            NotImplementedError: This method should be implemented in the derived class.
+
+        Returns:
+            Union[dict[str, Any], AsyncGenerator[dict[str, Any], None]]: The result of the approach.
+        """
         raise NotImplementedError
